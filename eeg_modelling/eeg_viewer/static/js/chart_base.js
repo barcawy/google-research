@@ -23,10 +23,31 @@ const events = goog.require('goog.events');
 const formatter = goog.require('eeg_modelling.eeg_viewer.formatter');
 const gvizEvents = goog.require('google.visualization.events');
 const object = goog.require('goog.object');
-const {assert, assertInstanceof, assertNumber, assertObject, assertString} = goog.require('goog.asserts');
+const {assert, assertInstanceof, assertObject, assertString} = goog.require('goog.asserts');
 
 /**
  * @typedef {{
+ *   annotations: (undefined|{
+ *     boxStyle: {
+ *       stroke: (string|undefined),
+ *       strokeWidth: (number|undefined),
+ *       rx: (number|undefined),
+ *       ry: (number|undefined),
+ *       gradient: {
+ *         color1: (string|undefined),
+ *         color2: (string|undefined),
+ *         x1: (string|undefined),
+ *         y1: (string|undefined),
+ *         x2: (string|undefined),
+ *         y2: (string|undefined),
+ *         useObjectBoundingBoxUnits: (boolean|undefined),
+ *       },
+ *     },
+ *     textStyle: {
+ *       fontSize: (number|undefined),
+ *       bold: (boolean|undefined),
+ *     },
+ *   }),
  *   chartArea: {
  *     backgroundColor: (string|{
  *       stroke: (string|undefined),
@@ -61,8 +82,10 @@ const {assert, assertInstanceof, assertNumber, assertObject, assertString} = goo
  *     position: string,
  *   },
  *   lineWidth: number,
+ *   selectionMode: (string|undefined),
  *   tooltip: {
- *     trigger: string
+ *     trigger: string,
+ *     isHtml: (boolean|undefined),
  *   },
  *   vAxis: {
  *     baselineColor: string,
@@ -85,6 +108,16 @@ let ChartOptions;
 
 /**
  * @typedef {{
+ *   left: number,
+ *   top: number,
+ *   width: number,
+ *   height: number,
+ * }}
+ */
+let ChartArea;
+
+/**
+ * @typedef {{
  *   type: string,
  *   handler: function(?Event):void,
  * }}
@@ -99,6 +132,43 @@ let ChartListener;
  */
 let Tick;
 
+/**
+ * @typedef {{
+ *   color: string,
+ *   fill: boolean,
+ * }}
+ */
+let HighlightViewportStyle;
+
+/**
+ * @typedef {{
+ *   startX: (number|undefined),
+ *   endX: (number|undefined),
+ *   color: (string|undefined),
+ *   fill: (boolean|undefined),
+ *   height: (number|undefined),
+ *   top: (number|undefined),
+ *   minWidth: (number|undefined),
+ * }}
+ */
+let OverlayElement;
+
+/**
+ * @typedef {
+ *   function(!Store.StoreData, !ChartArea=):!Array<!OverlayElement>
+ * }
+ */
+let GetElementsToDraw;
+
+/**
+ * @typedef {{
+ *   name: string,
+ *   getElementsToDraw: !GetElementsToDraw,
+ * }}
+ */
+let OverlayLayer;
+
+
 const /** @type {{LineChart}} */ chartDep = {LineChart};
 const /** @type {number} */ marginHeight = 20;
 const /** @type {number} */ axisLabelHeight = 50;
@@ -112,6 +182,17 @@ class ChartBase {
 
   static getChartDep() {
     return chartDep;
+  }
+
+  /**
+   * Returns a boolean indicating if one of properties is in changedProperties.
+   * Utility function used to determine if the charts should update.
+   * @param {!Array<?Store.Property>} changedProperties
+   * @param {!Array<?Store.Property>} properties
+   * @return {boolean} Indicate if there is a property present in both arrays.
+   */
+  static changedPropertiesIncludeAny(changedProperties, properties) {
+    return properties.some((prop) => changedProperties.includes(prop));
   }
 
   constructor() {
@@ -157,7 +238,9 @@ class ChartBase {
         position: 'none',
       },
       lineWidth: 1,
-      tooltip: {trigger: 'none'},
+      tooltip: {
+        trigger: 'none',
+      },
       vAxis: {
         baselineColor: '#fff',
         gridlines: {
@@ -186,14 +269,31 @@ class ChartBase {
     /** @type {?string} */
     this.overlayId = null;
 
+    /** @protected {?HighlightViewportStyle} */
+    this.highlightViewportStyle = null;
+
+    /** @protected {!Array<!OverlayLayer>} */
+    this.overlayLayers = [];
+
     /** @type {?string} */
     this.containerId = null;
 
     /** @type {?string} */
     this.parentId = 'parent-chart-container';
 
-    /** @type {?function(this:ChartBase):void} */
-    this.resizeHandler = null;
+    /**
+     * Handler called when an immediate redraw is required (e.g. when resizing
+     * the screen).
+     * @protected {?function(this:ChartBase):void}
+     */
+    this.redrawHandler = null;
+
+    /**
+     * Handler called when a data update and redraw are required (e.g. when
+     * updating the sensitivity of a channel).
+     * @protected {?function(this:ChartBase):void}
+     */
+    this.updateDataAndRedrawHandler = null;
 
     /** @type {!Array<!ChartListener>} */
     this.chartListeners = [];
@@ -238,30 +338,6 @@ class ChartBase {
     const proximalObject = this.getOption(proximalObjectKeys.join('.'));
     assertObject(proximalObject);
     proximalObject[proximalKey] = value;
-  }
-
-  /**
-   * Formats the annotations for DataTable.
-   * @param {!Store.StoreData} store Store object containing request chunk data.
-   * @param {!DataTable} dataTable DataTable object to add the annotations to.
-   */
-  addAnnotations(store, dataTable) {
-    dataTable.insertColumn(1, 'string');
-    dataTable.setColumnProperty(1, 'role', 'annotation');
-    store.annotations.forEach((annotation, index) => {
-      const labelText = annotation.labelText;
-      const samplingFreq = assertNumber(store.samplingFreq);
-      const startTime = assertNumber(annotation.startTime);
-      // Find the closest 'x' to the actual start time of the annotation, where
-      // 'x' is a point on the x-axis.  Note that the x-axis points are
-      // 1/samplingFreq apart from each other.
-      const x = (Math.round(startTime * samplingFreq) / samplingFreq);
-      for (let r = 0; r < dataTable.getNumberOfRows(); r++) {
-        if (dataTable.getValue(r, 0) == x) {
-          dataTable.setValue(r, 1, labelText);
-        }
-      }
-    });
   }
 
   /**
@@ -476,56 +552,122 @@ class ChartBase {
   };
 
   /**
-   * Adds a chart action that be exposed through a tooltip.  These actions must
-   * be added before a chart is drawn.
+   * Draws the chart content, with an updated configuration given the most
+   * recent store state.
    * @param {!Store.StoreData} store Store object containing request chunk data.
    */
-  addChartActions(store) {}
-
-  /**
-   * Updates configuration options before drawing the chart, updates the resize
-   * handler with the newest store state, and draws the canvas overlay.
-   * @param {!Store.StoreData} store Store object containing request chunk data.
-   */
-  handleDraw(store) {
+  drawContent(store) {
     this.updateChartOptions(store);
     this.getContainer().style.height = `${this.getOption('height')}px`;
     this.chart.draw(this.dataTable, this.chartOptions);
-    if (this.resizeHandler) {
-      events.unlisten(window, EventType.RESIZE, this.resizeHandler);
-    }
-    this.resizeHandler = this.createResizeHandler(store);
-    events.listen(window, EventType.RESIZE, this.resizeHandler);
-    if (this.overlayId) {
-      this.createOverlay(store);
-    }
   }
 
   /**
-   * Creates a resize handler bound to the most recent store state.
-   * @param {!Store.StoreData} store Store object containing request chunk data.
-   * @return {function():void} A drawing handler.
+   * Registers a callback to redraw the chart when the window resizes, bound to
+   * the most recent store state.
+   * @param {!Store.StoreData} store Store data.
+   * @private
    */
-  createResizeHandler(store) {
-    return () => this.handleDraw(store);
+  registerResizeHandler_(store) {
+    if (this.redrawHandler) {
+      events.unlisten(window, EventType.RESIZE, this.redrawHandler);
+    }
+    this.redrawHandler = () => {
+      this.drawContent(store);
+      this.drawOverlay(store);
+    };
+    events.listen(window, EventType.RESIZE, this.redrawHandler);
   }
 
   /**
-   * Updates the chart data or initializes the chart with the newest data, then
-   * calls the drawing handler.
-   * @param {!Store.StoreData} store Store object containing request chunk data.
+   * Creates a handler to update the data and redraw, bound to the most recent
+   * store state.
+   * Use this handler when the chart must be redrawn (also updating the
+   * dataTable) from a direct call, not in a change in the store.
+   * E.g., when the user changes the sensitivity of a channel.
+   * @param {!Store.StoreData} store Store data.
+   * @private
    */
-  handleChartData(store) {
-    this.clearChart_();
+  createUpdateDataAndRedrawHandler_(store) {
+    this.updateDataAndRedrawHandler = () => {
+      this.clearChart_();
+      this.dataTable = this.createDataTable(store);
+      this.drawContent(store);
+      this.drawOverlay(store);
+    };
+  }
+
+  /**
+   * Returns a boolean indicating if the data table of the chart should be
+   * updated.
+   * @param {!Store.StoreData} store Data from the store.
+   * @param {!Array<!Store.Property>} changedProperties Properties that changed
+   *     in the last action dispatched.
+   * @return {boolean}
+   * @abstract
+   */
+  shouldUpdateData(store, changedProperties) {}
+
+  /**
+   * Returns a boolean indicating if the chart content should be updated, but
+   * updating the data table is not needed (e.g. resize the window).
+   * @param {!Store.StoreData} store Data from the store.
+   * @param {!Array<!Store.Property>} changedProperties Properties that changed
+   *     in the last action dispatched.
+   * @return {boolean}
+   * @abstract
+   */
+  shouldRedrawContent(store, changedProperties) {}
+
+  /**
+   * Returns a boolean indicating if the chart overlay should be updated.
+   * @param {!Store.StoreData} store Data from the store.
+   * @param {!Array<!Store.Property>} changedProperties Properties that changed
+   *     in the last action dispatched.
+   * @return {boolean}
+   * @abstract
+   */
+  shouldRedrawOverlay(store, changedProperties) {}
+
+  /**
+   * Updates or initializes the chart with the newest data.
+   * Always use this method as callback when a property in the store changes,
+   * and override the shouldSomething() methods to decide what should be
+   * updated/redrawn or not.
+   * @param {!Store.StoreData} store Store object containing request chunk data.
+   * @param {!Array<!Store.Property>} changedProperties Store properties that
+   *     changed in the last action.
+   */
+  handleChartData(store, changedProperties) {
     const visible = this.shouldBeVisible(store);
     this.setVisibility_(visible);
     if (!visible) {
       return;
     }
     this.initChart();
-    this.addChartActions(store);
-    this.dataTable = this.createDataTable(store);
-    this.handleDraw(store);
+    this.registerResizeHandler_(store);
+    this.createUpdateDataAndRedrawHandler_(store);
+
+    const shouldUpdateData =
+        !this.dataTable || this.shouldUpdateData(store, changedProperties);
+    const shouldRedrawContent =
+        shouldUpdateData || this.shouldRedrawContent(store, changedProperties);
+    const shouldRedrawOverlay = shouldRedrawContent ||
+        this.shouldRedrawOverlay(store, changedProperties);
+
+    if (shouldUpdateData) {
+      this.clearChart_();
+      this.dataTable = this.createDataTable(store);
+    }
+
+    if (shouldRedrawContent) {
+      this.drawContent(store);
+    }
+
+    if (shouldRedrawOverlay) {
+      this.drawOverlay(store);
+    }
+
     this.addChartEventListeners();
   }
 
@@ -575,11 +717,15 @@ class ChartBase {
   }
 
   /**
-   * Initializes the overlay.
+   * Creates the overlay.
    * @param {!Store.StoreData} store Store object containing request chunk data.
    */
-  createOverlay(store) {
+  drawOverlay(store) {
+    if (!this.overlayId) {
+      return;
+    }
     this.sizeAndPositionOverlay();
+    this.drawOverlayLayers(store);
   }
 
   /**
@@ -597,24 +743,58 @@ class ChartBase {
   }
 
   /**
-   * Highlights the time span of the chart that is in the viewport of the main
-   * chart.
+   * Draws the overlay layers and highlights the viewport if needed.
+   * The different layers are defined in the overlayLayers field, and are used
+   * to represent different type of data being drawn in the overlay. The
+   * viewport highlighting is considered a special type of layer.
+   * The subclass should override the overlayLayers field and the
+   * highlightViewportStyle to customize what is drawn.
    * @param {!Store.StoreData} store Store object containing request chunk data.
+   * @protected
    */
-  highlightViewport(store) {
+  drawOverlayLayers(store) {
+    const canvas = this.getCanvas();
     const context = this.getContext();
+    context.clearRect(0, 0, canvas.width, canvas.height);
     const cli = this.getChartLayoutInterface();
     const chartArea = cli.getChartAreaBoundingBox();
-    // Highlight the time span in the viewport.
-    const view = [store.chunkStart, store.chunkStart + store.chunkDuration];
-    const canvasViewStartX =
-        Math.floor(cli.getXLocation(view[0]) - chartArea.left);
-    const canvasViewEndX =
-        Math.floor(cli.getXLocation(view[1]) - chartArea.left);
-    const viewWidth = canvasViewEndX - canvasViewStartX;
-    context.strokeStyle = '#696969';
-    context.setLineDash([2, 5]);
-    context.strokeRect(canvasViewStartX, 0, viewWidth, chartArea.height);
+
+    /** @type {!OverlayElement} */
+    const defaultConfig = {
+      height: chartArea.height,
+      top: 0,
+      minWidth: 5,
+    };
+
+    const drawElement = (element) => {
+      /** @type {!OverlayElement} */
+      const drawConfig = Object.assign({}, defaultConfig, element);
+
+      const startX = cli.getXLocation(drawConfig.startX) - chartArea.left;
+      const endX = cli.getXLocation(drawConfig.endX) - chartArea.left;
+      const width = Math.max(endX - startX, drawConfig.minWidth);
+
+      if (drawConfig.fill) {
+        context.fillStyle = drawConfig.color;
+        context.fillRect(startX, drawConfig.top, width, drawConfig.height);
+      } else {
+        context.strokeStyle = drawConfig.color;
+        context.lineWidth = 8;
+        context.strokeRect(startX, drawConfig.top, width, drawConfig.height);
+      }
+    };
+
+    this.overlayLayers.forEach((layer) => {
+      const layerElements = layer.getElementsToDraw(store, chartArea);
+      layerElements.forEach(drawElement);
+    });
+
+    if (this.highlightViewportStyle) {
+      drawElement(Object.assign({}, this.highlightViewportStyle, {
+        startX: store.chunkStart,
+        endX: store.chunkStart + store.chunkDuration,
+      }));
+    }
   }
 
   /**
@@ -626,70 +806,12 @@ class ChartBase {
     const scale = 0.5;
     return 1.0 / (1.0 + Math.exp(-scale * score));
   }
-
-  /**
-   * Draws the heatmap in the overlay of the chart.
-   * @param {!Store.StoreData} store Store object containing request chunk data.
-   */
-  drawChunkScores(store) {
-    const canvas = this.getCanvas();
-    const context = this.getContext();
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    if (!store.chunkScores) {
-      return;
-    }
-    const cli = this.getChartLayoutInterface();
-    const chartArea = cli.getChartAreaBoundingBox();
-    store.chunkScores.forEach((chunkScoreData) => {
-      const scoreData = chunkScoreData.getScoreDataMap().get(store.label);
-      const predictedValue = scoreData.getPredictedValue();
-      const opacity = this.getOpacity(predictedValue ? predictedValue : 0);
-      context.fillStyle = `rgba(255,110,64,${opacity})`;
-      const chunkStartTime = chunkScoreData.getStartTime();
-      assertNumber(chunkStartTime);
-      const canvasXStart = cli.getXLocation(chunkStartTime) - chartArea.left;
-      const canvasXEnd = cli.getXLocation(
-          chunkStartTime + chunkScoreData.getDuration()) - chartArea.left;
-      const canvasWidth = canvasXEnd - canvasXStart;
-      context.fillRect(canvasXStart, 0, canvasWidth, chartArea.height);
-    });
-  }
-
-  /**
-   * Draws the attribution map in the overlay of the chart.
-   * @param {!Store.StoreData} store Store object containing request chunk data.
-   */
-  drawAttributionMap(store) {
-    const canvas = this.getCanvas();
-    const context = this.getContext();
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    if (!store.attributionMaps) {
-      return;
-    }
-    const cli = this.getChartLayoutInterface();
-    const chartArea = cli.getChartAreaBoundingBox();
-    const map = store.attributionMaps.get(store.label);
-    const height = store.channelIds.length;
-    store.channelIds.forEach((channelId, rowIndex) => {
-      const attrValues = map.getAttributionMapMap().get(channelId)
-          .getAttributionList();
-      const width = assertNumber(store.predictionChunkSize) / attrValues.length;
-      const canvasYStart = (chartArea.height * rowIndex / height);
-      const canvasHeight = chartArea.height / height;
-      attrValues.forEach((opacity, colIndex) => {
-        context.fillStyle = 'rgba(255,110,64,' + opacity + ')';
-        const hStart = (assertNumber(store.predictionChunkStart) + colIndex *
-          width);
-        const canvasXStart = cli.getXLocation(hStart) - chartArea.left;
-        const canvasXEnd = cli.getXLocation(hStart + width) - chartArea.left;
-        const canvasWidth = canvasXEnd - canvasXStart;
-        context.fillRect(canvasXStart, canvasYStart, canvasWidth, canvasHeight);
-      });
-    });
-  }
 }
 
 goog.addSingletonGetter(ChartBase);
 
 exports = ChartBase;
 exports.Tick = Tick;
+exports.OverlayElement = OverlayElement;
+exports.ChartArea = ChartArea;
+exports.GetElementsToDraw = GetElementsToDraw;

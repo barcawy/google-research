@@ -20,6 +20,7 @@ const ChunkScoreData = goog.require('proto.eeg_modelling.protos.PredictionMetada
 const DataResponse = goog.require('proto.eeg_modelling.protos.DataResponse');
 const Dispatcher = goog.require('eeg_modelling.eeg_viewer.Dispatcher');
 const JspbMap = goog.require('jspb.Map');
+const SimilarPatternsResponse = goog.require('proto.eeg_modelling.protos.SimilarPatternsResponse');
 const log = goog.require('goog.log');
 const {assert, assertArray, assertInstanceof, assertNumber, assertString} = goog.require('goog.asserts');
 
@@ -46,9 +47,11 @@ const Property = {
   CHUNK_GRAPH_DATA: 'chunkGraphData',
   CHUNK_SCORES: 'chunkScores',
   CHUNK_START: 'chunkStart',
+  DOWNLOAD_DATA: 'downloadData',
   EDF_PATH: 'edfPath',
   ERROR: 'error',
   FILE_TYPE: 'fileType',
+  GRAPH_POINT_CLICK: 'graphPointClick',
   HIGH_CUT: 'highCut',
   INDEX_CHANNEL_MAP: 'indexChannelMap',
   IS_TYPING: 'isTyping',
@@ -66,26 +69,52 @@ const Property = {
   SAMPLING_FREQ: 'samplingFreq',
   SERIES_HEIGHT: 'seriesHeight',
   SENSITIVITY: 'sensitivity',
+  SIMILAR_PATTERN_EDIT: 'similarPatternEdit',
+  SIMILAR_PATTERN_ERROR: 'similarPatternError',
+  SIMILAR_PATTERN_PAST_TRIALS: 'similarPatternPastTrials',
+  SIMILAR_PATTERN_RESULT_RANK: 'similarPatternResultRank',
+  SIMILAR_PATTERN_SETTINGS: 'similarPatternSettings',
+  SIMILAR_PATTERN_TEMPLATE: 'similarPatternTemplate',
+  SIMILAR_PATTERNS_SEEN: 'similarPatternsSeen',
+  SIMILAR_PATTERNS_UNSEEN: 'similarPatternsUnseen',
   SSTABLE_KEY: 'sstableKey',
   TIMESCALE: 'timeScale',
   TFEX_FILE_PATH: 'tfExFilePath',
   TFEX_SSTABLE_PATH: 'tfExSSTablePath',
+  WAVE_EVENTS: 'waveEvents',
+  WAVE_EVENT_DRAFT: 'waveEventDraft',
 };
 
+
 /** @const {!Array<!Property>} */
-const responseProperties = [
-  Property.ABS_START,
-  Property.ANNOTATIONS,
-  Property.ATTRIBUTION_MAPS,
-  Property.CHUNK_GRAPH_DATA,
-  Property.CHUNK_SCORES,
-  Property.FILE_TYPE,
-  Property.INDEX_CHANNEL_MAP,
-  Property.NUM_SECS,
-  Property.PATIENT_ID,
-  Property.PREDICTION_CHUNK_SIZE,
-  Property.PREDICTION_CHUNK_START,
-  Property.SAMPLING_FREQ,
+const FileRequestProperties = [
+  Property.TFEX_SSTABLE_PATH,
+  Property.PREDICTION_SSTABLE_PATH,
+  Property.SSTABLE_KEY,
+  Property.EDF_PATH,
+  Property.TFEX_FILE_PATH,
+  Property.PREDICTION_FILE_PATH,
+];
+
+/** @const {!Array<!Property>} */
+const NumberRequestProperties = [
+  Property.CHUNK_START,
+  Property.CHUNK_DURATION,
+  Property.LOW_CUT,
+  Property.HIGH_CUT,
+  Property.NOTCH,
+];
+
+/** @const {!Array<!Property>} */
+const ListRequestProperties = [
+  Property.CHANNEL_IDS,
+];
+
+/** @const {!Array<!Property>} */
+const RequestProperties = [
+  ...NumberRequestProperties,
+  ...FileRequestProperties,
+  ...ListRequestProperties,
 ];
 
 /**
@@ -99,9 +128,11 @@ let Listener;
 
 /**
  * @typedef {{
- *   labelText: ?string,
- *   startTime: ?number,
- *   id: ?string,
+ *   id: (number|undefined),
+ *   labelText: string,
+ *   startTime: number,
+ *   duration: number,
+ *   channelList: !Array<string>,
  * }}
  */
 let Annotation;
@@ -116,11 +147,70 @@ let DataTableInput;
 
 /**
  * @typedef {{
+ *   properties: !Array<!Property>,
+ *   name: string,
+ *   timestamp: (string|undefined),
+ * }}
+ */
+let DownloadData;
+
+/**
+ * @typedef {{
  *   message: string,
  *   timestamp: number,
  * }}
  */
 let ErrorInfo;
+
+/**
+ * @typedef {{
+ *   timeValue: number,
+ *   channelName: string,
+ *   xPos: number,
+ *   yPos: number,
+ * }}
+ */
+let GraphDataPoint;
+
+/**
+ * Status for a received similar pattern.
+ * @enum {string}
+ */
+const SimilarPatternStatus = {
+  UNSEEN: 'unseen',
+  ACCEPTED: 'accepted',
+  EDITING: 'editing',
+  REJECTED: 'rejected',
+};
+
+/**
+ * @typedef {{
+ *   score: number,
+ *   startTime: number,
+ *   duration: number,
+ *   channelList: !Array<string>,
+ *   status: !SimilarPatternStatus,
+ * }}
+ */
+let SimilarPattern;
+
+/**
+ * @typedef {{
+ *   topN: number,
+ *   mergeCloseResults: boolean,
+ *   mergeThreshold: number,
+ * }}
+ */
+let SimilaritySettings;
+
+/**
+ * @typedef {{
+ *   template: !Annotation,
+ *   unseen: !Array<!SimilarPattern>,
+ *   seen: !Array<!SimilarPattern>,
+ * }}
+ */
+let SimilarityTrial;
 
 /**
  * Possible status when loading data.
@@ -144,9 +234,11 @@ const LoadingStatus = {
  *   chunkGraphData: ?DataTableInput,
  *   chunkScores: ?Array<!ChunkScoreData>,
  *   chunkStart: number,
+ *   downloadData: ?DownloadData,
  *   edfPath: ?string,
  *   error: ?ErrorInfo,
  *   fileType: ?string,
+ *   graphPointClick: ?GraphDataPoint,
  *   highCut: number,
  *   indexChannelMap: ?JspbMap<string, string>,
  *   isTyping: boolean,
@@ -162,16 +254,75 @@ const LoadingStatus = {
  *   predictionMode: !PredictionMode,
  *   predictionSSTablePath: ?string,
  *   samplingFreq: ?number,
+ *   similarPatternError: ?ErrorInfo,
+ *   similarPatternPastTrials: !Array<!SimilarityTrial>,
+ *   similarPatternResultRank: number,
+ *   similarPatternSettings: !SimilaritySettings,
+ *   similarPatternTemplate: ?Annotation,
+ *   similarPatternEdit: ?SimilarPattern,
+ *   similarPatternsUnseen: !Array<!SimilarPattern>,
+ *   similarPatternsSeen: !Array<!SimilarPattern>,
  *   seriesHeight: number,
  *   sensitivity: number,
  *   sstableKey: ?string,
  *   timeScale: number,
  *   tfExSSTablePath: ?string,
  *   tfExFilePath: ?string,
+ *   waveEvents: !Array<!Annotation>,
+ *   waveEventDraft: ?Annotation,
  * }}
  */
 let StoreData;
 
+/**
+ * @typedef {{
+ *   absStart: (?number|undefined),
+ *   annotations: (?Array<!Annotation>|undefined),
+ *   attributionMaps: (?JspbMap<string, !AttributionMap>|undefined),
+ *   channelIds: (?Array<string>|undefined),
+ *   chunkDuration: (number|undefined),
+ *   chunkGraphData: (?DataTableInput|undefined),
+ *   chunkScores: (?Array<!ChunkScoreData>|undefined),
+ *   chunkStart: (number|undefined),
+ *   downloadData: (?DownloadData|undefined),
+ *   edfPath: (?string|undefined),
+ *   error: (?ErrorInfo|undefined),
+ *   fileType: (?string|undefined),
+ *   graphPointClick: (?GraphDataPoint|undefined),
+ *   highCut: (number|undefined),
+ *   indexChannelMap: (?JspbMap<string, string>|undefined),
+ *   isTyping: (boolean|undefined),
+ *   label: (string|undefined),
+ *   loadingStatus: (!LoadingStatus|undefined),
+ *   lowCut: (number|undefined),
+ *   notch: (number|undefined),
+ *   numSecs: (?number|undefined),
+ *   patientId: (?string|undefined),
+ *   predictionChunkSize: (?number|undefined),
+ *   predictionChunkStart: (?number|undefined),
+ *   predictionFilePath: (?string|undefined),
+ *   predictionMode: (!PredictionMode|undefined),
+ *   predictionSSTablePath: (?string|undefined),
+ *   samplingFreq: (?number|undefined),
+ *   similarPatternError: (?ErrorInfo|undefined),
+ *   similarPatternPastTrials: (!Array<!SimilarityTrial>|undefined),
+ *   similarPatternResultRank: (number|undefined),
+ *   similarPatternSettings: (!SimilaritySettings|undefined),
+ *   similarPatternTemplate: (?Annotation|undefined),
+ *   similarPatternEdit: (?SimilarPattern|undefined),
+ *   similarPatternsUnseen: (!Array<!SimilarPattern>|undefined),
+ *   similarPatternsSeen: (!Array<!SimilarPattern>|undefined),
+ *   seriesHeight: (number|undefined),
+ *   sensitivity: (number|undefined),
+ *   sstableKey: (?string|undefined),
+ *   timeScale: (number|undefined),
+ *   tfExSSTablePath: (?string|undefined),
+ *   tfExFilePath: (?string|undefined),
+ *   waveEvents: (!Array<!Annotation>|undefined),
+ *   waveEventDraft: (?Annotation|undefined),
+ * }}
+ */
+let PartialStoreData;
 
 /**
  * Contains the state of the application in data stores.
@@ -189,9 +340,11 @@ class Store {
       chunkGraphData: null,
       chunkScores: null,
       chunkStart: 0,
+      downloadData: null,
       edfPath: null,
       error: null,
       fileType: null,
+      graphPointClick: null,
       highCut: 70,
       indexChannelMap: null,
       isTyping: true,
@@ -207,12 +360,26 @@ class Store {
       predictionMode: PredictionMode.NONE,
       predictionSSTablePath: null,
       samplingFreq: null,
+      similarPatternError: null,
+      similarPatternPastTrials: [],
+      similarPatternResultRank: 0,
+      similarPatternTemplate: null,
+      similarPatternEdit: null,
+      similarPatternsUnseen: [],
+      similarPatternsSeen: [],
+      similarPatternSettings: {
+        topN: 1,
+        mergeCloseResults: false,
+        mergeThreshold: 1,
+      },
       seriesHeight: 100,
       sensitivity: 5,
       sstableKey: null,
       timeScale: 1,
       tfExSSTablePath: null,
       tfExFilePath: null,
+      waveEvents: [],
+      waveEventDraft: null,
     };
 
     /** @public {!Array<!Listener>} */
@@ -230,14 +397,26 @@ class Store {
       );
     };
 
+    registerCallback(Dispatcher.ActionType.ADD_WAVE_EVENT,
+                     this.handleAddWaveEvent);
     registerCallback(Dispatcher.ActionType.ANNOTATION_SELECTION,
                      this.handleAnnotationSelection);
     registerCallback(Dispatcher.ActionType.CHANGE_TYPING_STATUS,
                      this.handleChangeTypingStatus);
+    registerCallback(Dispatcher.ActionType.CLICK_GRAPH,
+                     this.handleClickGraph);
+    registerCallback(Dispatcher.ActionType.DELETE_WAVE_EVENT,
+                     this.handleDeleteWaveEvent);
+    registerCallback(Dispatcher.ActionType.DOWNLOAD_DATA,
+                     this.handleDownloadData);
     registerCallback(Dispatcher.ActionType.ERROR,
                      this.handleError);
+    registerCallback(Dispatcher.ActionType.IMPORT_STORE,
+                     this.handleImportStore);
     registerCallback(Dispatcher.ActionType.MENU_FILE_LOAD,
                      this.handleMenuFileLoad);
+    registerCallback(Dispatcher.ActionType.NAVIGATE_TO_SPAN,
+                     this.handleNavigateToSpan);
     registerCallback(Dispatcher.ActionType.NAV_BAR_CHUNK_REQUEST,
                      this.handleNavBarRequest);
     registerCallback(Dispatcher.ActionType.REQUEST_RESPONSE_ERROR,
@@ -252,6 +431,24 @@ class Store {
                      this.handlePredictionModeSelection);
     registerCallback(Dispatcher.ActionType.PREDICTION_LABEL_SELECTION,
                      this.handlePredictionLabelSelection);
+    registerCallback(Dispatcher.ActionType.SEARCH_SIMILAR_UPDATE_SETTINGS,
+                     this.handleSearchSimilarSettings);
+    registerCallback(Dispatcher.ActionType.SEARCH_SIMILAR_REQUEST,
+                     this.handleSimilarPatternsRequest);
+    registerCallback(Dispatcher.ActionType.SEARCH_SIMILAR_REQUEST_MORE,
+                     this.handleSimilarPatternsRequestMore);
+    registerCallback(Dispatcher.ActionType.SEARCH_SIMILAR_RESPONSE_OK,
+                     this.handleSimilarPatternsResponseOk);
+    registerCallback(Dispatcher.ActionType.SEARCH_SIMILAR_RESPONSE_ERROR,
+                     this.handleSimilarPatternsResponseError);
+    registerCallback(Dispatcher.ActionType.SIMILAR_PATTERN_ACCEPT,
+                     this.handleSimilarPatternAccept);
+    registerCallback(Dispatcher.ActionType.SIMILAR_PATTERN_EDIT,
+                     this.handleSimilarPatternEdit);
+    registerCallback(Dispatcher.ActionType.SIMILAR_PATTERN_REJECT,
+                     this.handleSimilarPatternReject);
+    registerCallback(Dispatcher.ActionType.SIMILAR_PATTERN_REJECT_ALL,
+                     this.handleSimilarPatternRejectAll);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_GRIDLINES,
                      this.handleToolBarGridlines);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_HIGH_CUT,
@@ -262,18 +459,18 @@ class Store {
                      this.handleToolBarMontage);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_NEXT_CHUNK,
                      this.handleToolBarNextChunk);
-    registerCallback(Dispatcher.ActionType.TOOL_BAR_NEXT_SEC,
-                     this.handleToolBarNextSec);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_NOTCH,
                      this.handleToolBarNotch);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_PREV_CHUNK,
                      this.handleToolBarPrevChunk);
-    registerCallback(Dispatcher.ActionType.TOOL_BAR_PREV_SEC,
-                     this.handleToolBarPrevSec);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_SENSITIVITY,
                      this.handleToolBarSensitivity);
+    registerCallback(Dispatcher.ActionType.TOOL_BAR_SHIFT_SECS,
+                     this.handleToolBarShiftSecs);
     registerCallback(Dispatcher.ActionType.TOOL_BAR_ZOOM,
                      this.handleToolBarZoom);
+    registerCallback(Dispatcher.ActionType.UPDATE_WAVE_EVENT_DRAFT,
+                     this.handleUpdateWaveEventDraft);
     registerCallback(Dispatcher.ActionType.WARNING,
                      this.handleError);
     registerCallback(Dispatcher.ActionType.WINDOW_LOCATION_PENDING_REQUEST,
@@ -300,14 +497,16 @@ class Store {
 
   /**
    * Emits snapshot of the Store to all registered views if it has changed.
-   * @param {!StoreData} oldStoreData Copy of the store data before callback.
+   * @param {!PartialStoreData} newStoreData Object with store data to update.
    */
-  emitChange(oldStoreData) {
+  emitChange(newStoreData) {
     const changedProperties = [];
-    for (let prop in oldStoreData) {
-      if (JSON.stringify(this.storeData[prop]) !=
-          JSON.stringify(oldStoreData[prop])) {
+    for (let prop in newStoreData) {
+      const oldValue = this.storeData[prop];
+      const newValue = newStoreData[prop];
+      if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
         changedProperties.push(prop);
+        this.storeData[prop] = newValue;
       }
     }
 
@@ -318,15 +517,20 @@ class Store {
 
     const changeId = `[${Date.now() % 10000}]`;
 
-    log.info(this.logger_,
-        `${changeId} Emitting chunk data store change for properties... ${changedProperties.toString()}`);
+    log.info(
+        this.logger_,
+        `${changeId} Emitting chunk data store change for properties... ${
+            changedProperties.toString()}`);
 
     this.registeredListeners.forEach((listener) => {
       const propertyTriggers = listener.properties.filter(
           prop => changedProperties.includes(prop));
       if (propertyTriggers.length > 0) {
-        log.info(this.logger_, `${changeId} ... to ${listener.id} view (${propertyTriggers.toString()})`);
-        listener.callback(Object.assign({}, this.storeData));
+        log.info(
+            this.logger_,
+            `${changeId} ... to ${listener.id} view (${
+                propertyTriggers.toString()})`);
+        listener.callback(Object.assign({}, this.storeData), changedProperties);
       }
     });
   }
@@ -336,78 +540,249 @@ class Store {
    * Add a timestamp so every new message received is different from the
    * previous one, so the error listeners are called every time.
    * @param {string} message New error message
+   * @return {!ErrorInfo} New error info.
    */
-  updateError(message) {
-    this.storeData.error = {
+  newError(message) {
+    return {
       message,
       timestamp: Date.now(),
     };
   }
 
   /**
+   * Adds a wave event to the waveEvents property of the store.
+   * Sets the id of the wave event, and returns a copy of the array (does not
+   * modify in place).
+   * @param {!Annotation} waveEvent New wave event to add.
+   * @return {!Array<!Annotation>} Copy of the array with the new item added.
+   * @private
+   */
+  addWaveEvent_(waveEvent) {
+    const length = this.storeData.waveEvents.length;
+    const lastId = length > 0 ? this.storeData.waveEvents[length - 1].id : 0;
+    return [
+      ...this.storeData.waveEvents,
+      Object.assign({}, waveEvent, {
+        id: lastId + 1,
+      }),
+    ];
+  }
+
+  /**
+   * Returns a copy of a similar pattern with the status changed.
+   * @param {!SimilarPattern} similarPattern Similar pattern to copy.
+   * @param {!SimilarPatternStatus} status New status to set.
+   * @return {!SimilarPattern}
+   * @private
+   */
+  createSimilarPatternWithStatus_(similarPattern, status) {
+    return /** @type {!SimilarPattern} */ (Object.assign({}, similarPattern, {
+      status,
+    }));
+  }
+
+  /**
+   * Adds an accepted pattern to the similarPatternsSeen array.
+   * Returns a copy of the array, does not add in place.
+   * @param {!SimilarPattern} similarPattern Similar pattern to add as accepted.
+   * @return {!Array<!SimilarPattern>} Copy of the similarPatternsSeen array
+   *     with the accepted similar pattern added.
+   * @private
+   */
+  addAcceptedPattern_(similarPattern) {
+    const acceptedPattern = this.createSimilarPatternWithStatus_(
+        similarPattern, SimilarPatternStatus.ACCEPTED);
+    return [
+      ...this.storeData.similarPatternsSeen,
+      acceptedPattern,
+    ];
+  }
+
+  /**
+   * Adds an rejected pattern to the similarPatternsSeen array.
+   * Returns a copy of the array, does not add in place.
+   * @param {!SimilarPattern} similarPattern Similar pattern to add as rejected.
+   * @return {!Array<!SimilarPattern>} Copy of the similarPatternsSeen array
+   *     with the rejected similar pattern added.
+   * @private
+   */
+  addRejectedPattern_(similarPattern) {
+    const rejectedPattern = this.createSimilarPatternWithStatus_(
+        similarPattern, SimilarPatternStatus.REJECTED);
+    return [
+      ...this.storeData.similarPatternsSeen,
+      rejectedPattern,
+    ];
+  }
+
+  /**
+   * Handles data from an ADD_WAVE_EVENT action, which will add a new wave
+   * event to the list.
+   * If the event was a similar pattern marked for edit, it clears the pattern
+   * to edit and save it as accepted.
+   * @param {!Annotation} waveEvent The new wave event.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleAddWaveEvent(waveEvent) {
+    const /** !PartialStoreData */ newStoreData = {
+      waveEvents: this.addWaveEvent_(waveEvent),
+      waveEventDraft: null,
+    };
+    if (this.storeData.similarPatternEdit) {
+      const originalPattern = this.storeData.similarPatternEdit;
+      newStoreData.similarPatternsSeen = this.addAcceptedPattern_(
+          /** @type {!SimilarPattern} */ (Object.assign({}, originalPattern, {
+            startTime: waveEvent.startTime,
+            duration: waveEvent.duration,
+            channelList: [...waveEvent.channelList],
+          })));
+      newStoreData.similarPatternEdit = null;
+    }
+    return newStoreData;
+  }
+
+  /**
+   * Handles data from an UPDATE_WAVE_EVENT_DRAFT action.
+   * @param {?Annotation} waveEventDraft The draft wave event.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleUpdateWaveEventDraft(waveEventDraft) {
+    const /** !PartialStoreData */ newStoreData = {};
+
+    if (waveEventDraft) {
+      newStoreData.waveEventDraft =
+          /** @type {!Annotation} */ (Object.assign({}, waveEventDraft));
+    } else {
+      newStoreData.waveEventDraft = null;
+      newStoreData.similarPatternEdit = null;
+    }
+
+    return newStoreData;
+  }
+
+  /**
+   * Handles data from an DELETE_WAVE_EVENT action, which will delete an event.
+   * @param {!Dispatcher.IdData} data The wave event to delete.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleDeleteWaveEvent(data) {
+    return {
+      waveEvents: this.storeData.waveEvents.filter(wave => wave.id !== data.id),
+    };
+  }
+
+  /**
+   * Handles data from an CLICK_GRAPH action, which will save the click data.
+   * @param {!GraphDataPoint} data The click information.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleClickGraph(data) {
+    return {
+      graphPointClick: data,
+    };
+  }
+
+  /**
+   * Handles data from a DOWNLOAD_DATA action.
+   * @param {!DownloadData} data The data to download.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleDownloadData(data) {
+    return {
+      downloadData: /** @type {!DownloadData} */ (Object.assign({}, data, {
+        timestamp: (new Date()).toUTCString(),
+      })),
+    };
+  }
+
+  /**
+   * Handles data from a IMPORT_STORE action.
+   * @param {!Object} data The data to import to the store.
+   *     Notice that any object can be passed, but this method will only
+   *     consider existing properties.
+   *     Also, the type of each property is not checked, so the store could be
+   *     broken after importing. It's up to the user to import a correct file.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleImportStore(data) {
+    const /** !PartialStoreData */ newStoreData = {};
+    Object.values(Property).forEach((propertyName) => {
+      if (propertyName in data) {
+        newStoreData[propertyName] = data[propertyName];
+      }
+    });
+    return newStoreData;
+  }
+
+  /**
    * Handles data from a REQUEST_RESPONSE_OK action.
    * @param {!DataResponse} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleRequestResponseOk(data) {
+    const /** !PartialStoreData */ newStoreData = {};
+
     const waveformChunk = data.getWaveformChunk();
-    this.storeData.chunkGraphData = /** @type {?DataTableInput} */ (JSON.parse(
+    newStoreData.chunkGraphData = /** @type {!DataTableInput} */ (JSON.parse(
         assertString(waveformChunk.getWaveformDatatable())));
-    this.storeData.channelIds =
+    newStoreData.channelIds =
         waveformChunk.getChannelDataIdsList()
             .map(
                 channelDataId =>
                     this.convertChannelDataIdToIndexStr(channelDataId))
             .filter(channelStr => channelStr);
-    this.storeData.samplingFreq = waveformChunk.getSamplingFreq();
+    newStoreData.samplingFreq = waveformChunk.getSamplingFreq();
     const waveformMeta = data.getWaveformMetadata();
-    this.storeData.absStart = waveformMeta.getAbsStart();
-    this.storeData.annotations = waveformMeta.getLabelsList().map((label) => {
+    newStoreData.absStart = waveformMeta.getAbsStart();
+    newStoreData.annotations = waveformMeta.getLabelsList().map((label) => {
       return {
         labelText: label.getLabelText(),
         startTime: label.getStartTime(),
-        id: null,
+        duration: 0,
+        channelList: [],
       };
     });
-    this.storeData.fileType = waveformMeta.getFileType();
-    this.storeData.indexChannelMap = assertInstanceof(
+    newStoreData.fileType = waveformMeta.getFileType();
+    newStoreData.indexChannelMap = assertInstanceof(
         waveformMeta.getChannelDictMap(), JspbMap);
-    this.storeData.numSecs = waveformMeta.getNumSecs();
-    this.storeData.patientId = waveformMeta.getPatientId();
-    this.storeData.sstableKey = waveformMeta.getSstableKey() || null;
+    newStoreData.numSecs = waveformMeta.getNumSecs();
+    newStoreData.patientId = waveformMeta.getPatientId();
+    newStoreData.sstableKey = waveformMeta.getSstableKey() || null;
     if (data.hasPredictionChunk() &&
         data.getPredictionChunk().getChunkStart() != null &&
         data.getPredictionChunk().getChunkDuration() != null) {
       const predictionChunk = data.getPredictionChunk();
-      this.storeData.attributionMaps = predictionChunk.getAttributionDataMap();
-      this.storeData.predictionChunkSize = assertNumber(
+      newStoreData.attributionMaps = predictionChunk.getAttributionDataMap();
+      newStoreData.predictionChunkSize = assertNumber(
           predictionChunk.getChunkDuration());
-      this.storeData.predictionChunkStart = assertNumber(
+      newStoreData.predictionChunkStart = assertNumber(
           predictionChunk.getChunkStart());
     } else {
-      this.storeData.attributionMaps = null;
-      this.storeData.predictionChunkSize = null;
-      this.storeData.predictionChunkStart = null;
+      newStoreData.attributionMaps = null;
+      newStoreData.predictionChunkSize = null;
+      newStoreData.predictionChunkStart = null;
     }
     if (data.hasPredictionMetadata()) {
       const predictionMeta = data.getPredictionMetadata();
-      this.storeData.chunkScores = predictionMeta.getChunkScoresList();
+      newStoreData.chunkScores = predictionMeta.getChunkScoresList();
     } else {
-      this.storeData.chunkScores = null;
+      newStoreData.chunkScores = null;
     }
 
     const wasFirstLoad = this.storeData.loadingStatus === LoadingStatus.LOADING;
-    this.storeData.loadingStatus =
+    newStoreData.loadingStatus =
         wasFirstLoad ? LoadingStatus.LOADED : LoadingStatus.RELOADED;
+
+    return newStoreData;
   }
 
   /**
    * Handles data from a WINDOW_LOCATION_PENDING_REQUEST action.
    * @param {!Dispatcher.FragmentData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleWindowLocationPendingRequest(data) {
-    responseProperties.forEach((prop) => {
-      this.storeData[prop] = null;
-    });
+    const /** !PartialStoreData */ newStoreData = {};
 
     /**
      * Parse a string to number.
@@ -421,28 +796,30 @@ class Store {
     const stringToArray = (str) => str ? str.split(',') : [];
 
     /**
-     * Update a key from storeData with the value from incoming data.
+     * Update a key from newStoreData with the value from incoming data.
      */
     const updateKey = (storeKey, parser = undefined) => {
       const dataKey = storeKey.toLowerCase();
       const newValue = data[dataKey];
       if (newValue && this.storeData[storeKey] != newValue) {
-        this.storeData[storeKey] = parser ? parser(newValue) : newValue;
+        newStoreData[storeKey] = parser ? parser(newValue) : newValue;
       }
     };
 
-    updateKey('tfExSSTablePath');
-    updateKey('predictionSSTablePath');
-    updateKey('sstableKey');
-    updateKey('edfPath');
-    updateKey('tfExFilePath');
-    updateKey('predictionFilePath');
-    updateKey('chunkStart', numberParser);
-    updateKey('chunkDuration', numberParser);
-    updateKey('channelIds', stringToArray);
-    updateKey('lowCut', numberParser);
-    updateKey('highCut', numberParser);
-    updateKey('notch', numberParser);
+    updateKey(Property.TFEX_SSTABLE_PATH);
+    updateKey(Property.PREDICTION_SSTABLE_PATH);
+    updateKey(Property.SSTABLE_KEY);
+    updateKey(Property.EDF_PATH);
+    updateKey(Property.TFEX_FILE_PATH);
+    updateKey(Property.PREDICTION_FILE_PATH);
+    updateKey(Property.CHUNK_START, numberParser);
+    updateKey(Property.CHUNK_DURATION, numberParser);
+    updateKey(Property.CHANNEL_IDS, stringToArray);
+    updateKey(Property.LOW_CUT, numberParser);
+    updateKey(Property.HIGH_CUT, numberParser);
+    updateKey(Property.NOTCH, numberParser);
+
+    return newStoreData;
   }
 
   /**
@@ -450,21 +827,29 @@ class Store {
    * the error message. Use these actions for any common error or warning
    * (except special types, such as request response error).
    * @param {!Dispatcher.ErrorData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleError(data) {
-    this.updateError(data.message);
+    return {
+      error: this.newError(data.message),
+    };
   }
 
   /**
    * Handles data from a REQUEST_RESPONSE_ERROR action that will modify the
    * error message and the loading status.
    * @param {!Dispatcher.ErrorData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleRequestResponseError(data) {
-    this.updateError(data.message);
+    const error = this.newError(data.message);
     const wasFirstLoad = this.storeData.loadingStatus === LoadingStatus.LOADING;
-    this.storeData.loadingStatus =
+    const loadingStatus =
         wasFirstLoad ? LoadingStatus.NO_DATA : LoadingStatus.RELOADED;
+    return {
+      error,
+      loadingStatus,
+    };
   }
 
   /**
@@ -472,187 +857,470 @@ class Store {
    * status.
    * @param {!Dispatcher.RequestStartData} data The data payload from the
    *     action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleRequestStart(data) {
     const isFirstLoad = this.storeData.loadingStatus === LoadingStatus.NO_DATA;
-    this.storeData.loadingStatus = (isFirstLoad || data.fileParamDirty) ?
+    const loadingStatus = (isFirstLoad || data.fileParamDirty) ?
         LoadingStatus.LOADING :
         LoadingStatus.RELOADING;
+    return {
+      loadingStatus,
+    };
   }
 
   /**
    * Handles data from a CHANGE_TYPING_STATUS action, that will update the
    * typing status in the store.
+   * @param {!Dispatcher.IsTypingData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleChangeTypingStatus(data) {
-    this.storeData.isTyping = data.isTyping;
+    return {
+      isTyping: data.isTyping,
+    };
+  }
+
+  /**
+   * Returns a SimilarityTrial definition, given by the data saved in the store.
+   * @return {!SimilarityTrial} The trial defined by the data in the store.
+   * @private
+   */
+  saveFinishedTrial_() {
+    return {
+      template: /** @type {!Annotation} */ (
+          this.storeData.similarPatternTemplate),
+      seen: this.storeData.similarPatternsSeen,
+      unseen: this.storeData.similarPatternsUnseen,
+    };
+  }
+
+  /**
+   * Handles data from a SEARCH_SIMILAR_REQUEST action, which will save the
+   * similar pattern target and trigger a request.
+   * @param {!Annotation} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternsRequest(data) {
+    const /** !PartialStoreData */ newStoreData = {
+      similarPatternTemplate: data,
+      similarPatternEdit: null,
+      similarPatternsSeen: [],
+      similarPatternsUnseen: [],
+    };
+
+    const prevTemplate = this.storeData.similarPatternTemplate;
+    if (prevTemplate && prevTemplate.id === data.id) {
+      newStoreData.similarPatternResultRank = this.increaseSimilarityRank_();
+    } else {
+      newStoreData.similarPatternResultRank = 0;
+    }
+
+    if (prevTemplate && prevTemplate.id !== data.id) {
+      newStoreData.similarPatternPastTrials = [
+        ...this.storeData.similarPatternPastTrials,
+        this.saveFinishedTrial_(),
+      ];
+    }
+
+    return newStoreData;
+  }
+
+  /**
+   * Returns the similarPatternResultRank incremented with the amount of
+   * results that are requested to the server.
+   * @return {number} New similarPatternResultRank value
+   * @private
+   */
+  increaseSimilarityRank_() {
+    const amountRequested = this.storeData.similarPatternSettings.topN;
+    return this.storeData.similarPatternResultRank + amountRequested;
+  }
+
+  /**
+   * Handles data from a SEARCH_SIMILAR_REQUEST_MORE action, which will increase
+   * the similarPatternResultRank property to trigger a new request.
+   * The similarPatternResultRank property indicates the ranking of the
+   * similarity results. For example:
+   * - if the property is 0, the results received have rankings 1, 2, 3, ...
+   * - if the property is 2, the results received have rankings 3, 4, 5, ...
+   *
+   * If the user wants more results, this property is updated, the requests
+   * view receives the change and sends a new request. Note that the
+   * similarPatternTemplate property does not change, so the resultRank change
+   * is needed to trigger the request.
+   * @return {?PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternsRequestMore() {
+    if (!this.storeData.similarPatternTemplate) {
+      return null;
+    }
+    return {
+      similarPatternResultRank: this.increaseSimilarityRank_(),
+    };
+  }
+
+  /**
+   * Handles data from a SEARCH_SIMILAR_UPDATE_SETTINGS action, which will
+   * update the similarity settings saved in the store.
+   * @param {!SimilaritySettings} data The payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSearchSimilarSettings(data) {
+    const oldSettings = this.storeData.similarPatternSettings;
+    return {
+      similarPatternSettings: /** @type {!SimilaritySettings} */ (
+          Object.assign({}, oldSettings, data)),
+    };
+  }
+
+  /**
+   * Handles data from a SEARCH_SIMILAR_RESPONSE_OK action, which will save
+   * the similar patterns found.
+   * @param {!SimilarPatternsResponse} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternsResponseOk(data) {
+    const templatePattern = this.storeData.similarPatternTemplate;
+    const newUnseen = data.getSimilarPatternsList().map(
+        (similarPattern) => /** @type {!SimilarPattern} */ (Object.assign(
+            {},
+            similarPattern.toObject(),
+            {
+              status: SimilarPatternStatus.UNSEEN,
+              channelList: [...templatePattern.channelList],
+            },
+            )));
+    return {
+      similarPatternError: null,
+      similarPatternsUnseen: [
+        ...this.storeData.similarPatternsUnseen,
+        ...newUnseen,
+      ],
+    };
+  }
+
+  /**
+   * Handles data from a SEARCH_SIMILAR_RESPONSE_ERROR action, which will update
+   * the error.
+   * @param {!Dispatcher.ErrorData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternsResponseError(data) {
+    return {
+      similarPatternError: this.newError(data.message),
+    };
+  }
+
+  /**
+   * Removes a similar pattern from the similarPatternsUnseen array.
+   * Returns a copy of the array, does not modify in place.
+   * Note that it does not mark the pattern as seen.
+   * @param {!SimilarPattern} removePattern Similar pattern to remove.
+   * @return {!Array<!SimilarPattern>} Copy of the similarPatternsUnseen, with
+   *     the pattern removed.
+   * @private
+   */
+  removeSimilarPatternFromUnseen_(removePattern) {
+    return this.storeData.similarPatternsUnseen.filter(
+        (pattern) => pattern.startTime !== removePattern.startTime);
+  }
+
+  /**
+   * Handles data from a SIMILAR_PATTERN_ACCEPT action, which will copy the
+   * accepted pattern to the wave events list, and move it from the unseen to
+   * the seen list.
+   * @param {!SimilarPattern} data The similar pattern to accept.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternAccept(data) {
+    const templatePattern = this.storeData.similarPatternTemplate;
+    const waveEvents = this.addWaveEvent_({
+      labelText: templatePattern.labelText,
+      startTime: data.startTime,
+      duration: data.duration,
+      channelList: data.channelList,
+    });
+    return {
+      waveEvents,
+      similarPatternsUnseen: this.removeSimilarPatternFromUnseen_(data),
+      similarPatternsSeen: this.addAcceptedPattern_(data),
+    };
+  }
+
+  /**
+   * Handles data from a SIMILAR_PATTERN_EDIT action, which will save the
+   * pattern and remove it from the unseen list.
+   * @param {!SimilarPattern} data The similar pattern to edit.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternEdit(data) {
+    return {
+      similarPatternEdit: this.createSimilarPatternWithStatus_(
+          data, SimilarPatternStatus.EDITING),
+      similarPatternsUnseen: this.removeSimilarPatternFromUnseen_(data),
+    };
+  }
+
+  /**
+   * Handles data from a SIMILAR_PATTERN_REJECT action, which will remove the
+   * similar pattern from the list.
+   * @param {!SimilarPattern} data The similar pattern to reject.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternReject(data) {
+    return {
+      similarPatternsUnseen: this.removeSimilarPatternFromUnseen_(data),
+      similarPatternsSeen: this.addRejectedPattern_(data),
+    };
+  }
+
+  /**
+   * Handles data from a SIMILAR_PATTERN_REJECT_ALL action, which will remove
+   * all the similar patterns from the results and will save them as rejected.
+   * @return {!PartialStoreData} store data with changed properties.
+   */
+  handleSimilarPatternRejectAll() {
+    const rejectedPatterns =
+        this.storeData.similarPatternsUnseen.map((similarPattern) => {
+          return this.createSimilarPatternWithStatus_(
+              similarPattern, SimilarPatternStatus.REJECTED);
+        });
+    return {
+      similarPatternsUnseen: [],
+      similarPatternsSeen: [
+        ...this.storeData.similarPatternsSeen,
+        ...rejectedPatterns,
+      ],
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_GRIDLINES action that will modify the time
    * scale.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarGridlines(data) {
     assertNumber(data.selectedValue);
-    this.storeData.timeScale = data.selectedValue;
+    return {
+      timeScale: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_HIGH_CUT action which will modify the high cut
    * filter parameter.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarHighCut(data) {
     assertNumber(data.selectedValue);
-    this.storeData.highCut = data.selectedValue;
+    return {
+      highCut: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_LOW_CUT action which will modify the low cut
    * filter parameter.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarLowCut(data) {
     assertNumber(data.selectedValue);
-    this.storeData.lowCut = data.selectedValue;
+    return {
+      lowCut: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_MONTAGE action.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarMontage(data) {
     assertArray(data.selectedValue);
-    this.storeData.channelIds = data.selectedValue;
+    return {
+      channelIds: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_NEXT_CHUNK action which will modify the chunk
    * start.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarNextChunk() {
-    this.storeData.chunkStart = (this.storeData.chunkStart +
-        this.storeData.chunkDuration);
+    return {
+      chunkStart: this.storeData.chunkStart + this.storeData.chunkDuration,
+    };
   }
 
   /**
-   * Handles data from a TOOL_BAR_NEXT_SEC action which will modify the chunk
-   * start.
+   * Handles data from a TOOL_BAR_SHIFT_SECS action which will move the chunk
+   * start an amount of seconds, either forward or backwards.
+   * @param {!Dispatcher.TimeData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
-  handleToolBarNextSec() {
-    this.storeData.chunkStart = this.storeData.chunkStart + 1;
+  handleToolBarShiftSecs(data) {
+    return {
+      chunkStart: this.storeData.chunkStart + data.time,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_NOTCH action.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarNotch(data) {
     assertNumber(data.selectedValue);
-    this.storeData.notch = data.selectedValue;
+    return {
+      notch: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_PREV_CHUNK action which will modify the chunk
    * start.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarPrevChunk() {
-    this.storeData.chunkStart = (this.storeData.chunkStart -
-        this.storeData.chunkDuration);
-  }
-
-  /**
-   * Handles data from a TOOL_BAR_PREV_SEC action which will modify the chunk
-   * start.
-   */
-  handleToolBarPrevSec() {
-    this.storeData.chunkStart = this.storeData.chunkStart - 1;
+    return {
+      chunkStart: this.storeData.chunkStart - this.storeData.chunkDuration,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_SENSITIVITY action which will modify the
    * sensitivity.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarSensitivity(data) {
     assertNumber(data.selectedValue);
-    this.storeData.sensitivity = data.selectedValue;
+    return {
+      sensitivity: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a TOOL_BAR_ZOOM action which will modify the chunk
    * duration.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handleToolBarZoom(data) {
     assertNumber(data.selectedValue);
-    this.storeData.chunkDuration = data.selectedValue;
+    return {
+      chunkDuration: data.selectedValue,
+    };
   }
 
   /**
    * Handles data from a PREDICTION_CHUNK_REQUEST action which will modify the
    * chunk start.
    * @param {!Dispatcher.TimeData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handlePredictionChunkRequest(data) {
-    this.storeData.chunkStart = Math.round(data.time);
+    return {
+      chunkStart: Math.round(data.time),
+    };
   }
 
   /**
    * Handles data from a PREDICTION_MODE_SELECTION action which will modify the
    * prediction viewing mode.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handlePredictionModeSelection(data) {
     const mode = assertString(data.selectedValue);
     assert(Object.values(PredictionMode).includes(mode));
-    this.storeData.predictionMode = /** @type {!PredictionMode} */(mode);
+    return {
+      predictionMode: /** @type {!PredictionMode} */(mode),
+    };
   }
 
   /**
    * Handles data from a PREDICTION_LABEL_SELECTION action which will modify the
    * label.
    * @param {!Dispatcher.SelectionData} data The data payload from the action.
+   * @return {!PartialStoreData} store data with changed properties.
    */
   handlePredictionLabelSelection(data) {
-    this.storeData.label = assertString(data.selectedValue);
+    return {
+      label: assertString(data.selectedValue),
+    };
   }
 
   /**
    * Handles data from an ANNOTATION_SELECTION action which will update the
    * chunk start.
    * @param {!Dispatcher.TimeData} data The data payload from the action.
+   * @return {?PartialStoreData} store data with changed properties.
    */
   handleAnnotationSelection(data) {
-    this.storeData.chunkStart = Math.round(data.time -
-        this.storeData.chunkDuration / 2);
+    return {
+      chunkStart: Math.round(data.time - this.storeData.chunkDuration / 2),
+    };
   }
 
   /**
    * Handles data from a MENU_FILE_LOAD action which may update the file input
    * options.
    * @param {!Dispatcher.FileParamData} data The data payload from the action.
+   * @return {?PartialStoreData} store data with changed properties.
    */
   handleMenuFileLoad(data) {
-    this.storeData.tfExSSTablePath = data.tfExSSTablePath || null;
-    this.storeData.predictionSSTablePath = data.predictionSSTablePath || null;
-    this.storeData.sstableKey = data.sstableKey || null;
-    this.storeData.edfPath = data.edfPath || null;
-    this.storeData.tfExFilePath = data.tfExFilePath || null;
-    this.storeData.predictionFilePath = data.predictionFilePath || null;
+    return {
+      tfExSSTablePath: data.tfExSSTablePath || null,
+      predictionSSTablePath: data.predictionSSTablePath || null,
+      sstableKey: data.sstableKey || null,
+      edfPath: data.edfPath || null,
+      tfExFilePath: data.tfExFilePath || null,
+      predictionFilePath: data.predictionFilePath || null,
+    };
   }
 
   /**
    * Handles data from a NAV_BAR_CHUNK_REQUEST action which will update the
    * chunk start.
    * @param {!Dispatcher.TimeData} data The data payload from the action.
+   * @return {?PartialStoreData} store data with changed properties.
    */
   handleNavBarRequest(data) {
-    if (data.time || data.time === 0) {
-      this.storeData.chunkStart = this.storeData.chunkDuration * Math.floor(
-        data.time / this.storeData.chunkDuration);
+    if (!goog.isNumber(data.time)) {
+      return null;
     }
+    return {
+      chunkStart: Math.round(data.time - this.storeData.chunkDuration / 2),
+    };
+  }
+
+  /**
+   * Handles data from a NAVIGATE_TO_SPAN action which will update the
+   * chunk start.
+   * If the span is shorter than chunkDuration, it will try to leave the span
+   * in the middle of the viewport.
+   * If not, it will try to leave the start of the span in the middle of the
+   * viewport.
+   * @param {!Dispatcher.TimeSpanData} data The data payload from the action.
+   * @return {?PartialStoreData} store data with changed properties.
+   */
+  handleNavigateToSpan(data) {
+    let viewportCenter;
+    if (data.duration < this.storeData.chunkDuration) {
+      viewportCenter = data.startTime + data.duration / 2;
+    } else {
+      viewportCenter = data.startTime;
+    }
+    const chunkStart = viewportCenter - this.storeData.chunkDuration / 2;
+    return {
+      chunkStart: Math.round(chunkStart),
+    };
   }
 
   /**
@@ -676,23 +1344,24 @@ class Store {
   }
 
   /**
-   * Clips chunk time within [0, numSecs].
+   * Clips chunk start within [0, numSecs].
+   * @param {!PartialStoreData} newStoreData New store data.
    */
-  clipTime() {
-    if (this.storeData.numSecs) {
-      this.storeData.chunkStart = Math.min(this.storeData.chunkStart,
-          this.storeData.numSecs - this.storeData.chunkDuration);
-      this.storeData.chunkStart = Math.max(this.storeData.chunkStart, 0);
+  clipChunkStart(newStoreData) {
+    if (!newStoreData || newStoreData.chunkStart == null) {
+      return;
     }
-  }
 
-  /**
-   * Creates a copy of the current StoreData state.
-   * @return {!StoreData} Copy of the current state.
-   */
-  getStoreDataState() {
-    return /** @type {!StoreData} */(JSON.parse(
-        JSON.stringify(this.storeData)));
+    const numSecs = newStoreData.numSecs != null ?
+        newStoreData.numSecs : this.storeData.numSecs;
+    const chunkDuration = newStoreData.chunkDuration != null ?
+        newStoreData.chunkDuration : this.storeData.chunkDuration;
+
+    if (numSecs) {
+      newStoreData.chunkStart =
+          Math.min(newStoreData.chunkStart, numSecs - chunkDuration);
+      newStoreData.chunkStart = Math.max(newStoreData.chunkStart, 0);
+    }
   }
 
   /**
@@ -701,10 +1370,9 @@ class Store {
    * @param {!Object} data The data accompanying the action event.
    */
   callbackWrapper(handler, data) {
-    const oldStoreData = this.getStoreDataState();
-    handler(data);
-    this.clipTime();
-    this.emitChange(oldStoreData);
+    const newStoreData = handler(data);
+    this.clipChunkStart(newStoreData);
+    this.emitChange(newStoreData);
   }
 }
 
@@ -712,7 +1380,16 @@ goog.addSingletonGetter(Store);
 
 exports = Store;
 exports.StoreData = StoreData;
+exports.PartialStoreData = PartialStoreData;
+exports.Annotation = Annotation;
+exports.SimilarPattern = SimilarPattern;
+exports.SimilarPatternStatus = SimilarPatternStatus;
+exports.SimilarityTrial = SimilarityTrial;
 exports.ErrorInfo = ErrorInfo;
 exports.Property = Property;
 exports.PredictionMode = PredictionMode;
 exports.LoadingStatus = LoadingStatus;
+exports.FileRequestProperties = FileRequestProperties;
+exports.NumberRequestProperties = NumberRequestProperties;
+exports.ListRequestProperties = ListRequestProperties;
+exports.RequestProperties = RequestProperties;

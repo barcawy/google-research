@@ -21,28 +21,43 @@ const log = goog.require('goog.log');
  * @enum {string}
  */
 const ActionType = {
+  ADD_WAVE_EVENT: 'addWaveEvent',
   ANNOTATION_SELECTION: 'annotationSelection',
   CHANGE_TYPING_STATUS: 'changeTypingStatus',
+  CLICK_GRAPH: 'clickGraph',
+  DELETE_WAVE_EVENT: 'deleteWaveEvent',
+  DOWNLOAD_DATA: 'downloadData',
   ERROR: 'error',
+  IMPORT_STORE: 'importStore',
   MENU_FILE_LOAD: 'menuFileLoad',
   NAV_BAR_CHUNK_REQUEST: 'navBarChunkRequest',
+  NAVIGATE_TO_SPAN: 'navigateToSpan',
   PREDICTION_CHUNK_REQUEST: 'predictionChunkRequest',
   PREDICTION_MODE_SELECTION: 'predictionModeSelection',
   PREDICTION_LABEL_SELECTION: 'predictionLabelSelection',
   REQUEST_RESPONSE_ERROR: 'requestResponseError',
   REQUEST_RESPONSE_OK: 'requestResponseOk',
   REQUEST_START: 'requestStart',
+  SEARCH_SIMILAR_UPDATE_SETTINGS: 'searchSimilarUpdateSettings',
+  SEARCH_SIMILAR_REQUEST: 'searchSimilarRequest',
+  SEARCH_SIMILAR_REQUEST_MORE: 'searchSimilarRequestMore',
+  SEARCH_SIMILAR_RESPONSE_OK: 'searchSimilarResponseOk',
+  SEARCH_SIMILAR_RESPONSE_ERROR: 'searchSimilarResponseError',
+  SIMILAR_PATTERN_ACCEPT: 'similarPatternAccept',
+  SIMILAR_PATTERN_EDIT: 'similarPatternEdit',
+  SIMILAR_PATTERN_REJECT: 'similarPatternReject',
+  SIMILAR_PATTERN_REJECT_ALL: 'similarPatternRejectAll',
   TOOL_BAR_GRIDLINES: 'toolBarGridlines',
   TOOL_BAR_HIGH_CUT: 'toolBarHighCut',
   TOOL_BAR_LOW_CUT: 'toolBarLowCut',
   TOOL_BAR_MONTAGE: 'toolBarMontage',
   TOOL_BAR_NEXT_CHUNK: 'toolBarNextChunk',
-  TOOL_BAR_NEXT_SEC: 'toolBarNextSec',
   TOOL_BAR_NOTCH: 'toolBarNotch',
   TOOL_BAR_PREV_CHUNK: 'toolBarPrevChunk',
-  TOOL_BAR_PREV_SEC: 'toolBarPrevSec',
   TOOL_BAR_SENSITIVITY: 'toolBarSensitivity',
+  TOOL_BAR_SHIFT_SECS: 'toolBarShiftSecs',
   TOOL_BAR_ZOOM: 'toolBarZoom',
+  UPDATE_WAVE_EVENT_DRAFT: 'updateWaveEventDraft',
   WARNING: 'warning',
   WINDOW_LOCATION_PENDING_REQUEST: 'windowLocationPendingRequest',
 };
@@ -61,6 +76,14 @@ let ActionEvent;
  * }}
  */
 let TimeData;
+
+/**
+ * @typedef {{
+ *   startTime: number,
+ *   duration: number,
+ * }}
+ */
+let TimeSpanData;
 
 /**
  * @typedef {{
@@ -115,6 +138,20 @@ let SelectionData;
  */
 let RequestStartData;
 
+/**
+ * @typedef {{
+ *   isTyping: boolean,
+ * }}
+ */
+let IsTypingData;
+
+/**
+ * @typedef {{
+ *   id: number,
+ * }}
+ */
+let IdData;
+
 
 class Dispatcher {
 
@@ -156,7 +193,10 @@ exports = Dispatcher;
 exports.ActionType = ActionType;
 exports.FragmentData = FragmentData;
 exports.TimeData = TimeData;
+exports.TimeSpanData = TimeSpanData;
 exports.FileParamData = FileParamData;
 exports.ErrorData = ErrorData;
 exports.SelectionData = SelectionData;
 exports.RequestStartData = RequestStartData;
+exports.IsTypingData = IsTypingData;
+exports.IdData = IdData;

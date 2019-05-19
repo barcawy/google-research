@@ -21,9 +21,15 @@ env:
     - PROJECT="dql_grasping"
     - PROJECT="state_of_sparsity"
     - PROJECT="neutra"
+    - PROJECT="robust_loss"
+    - PROJECT="norml"
+    - PROJECT="solver1d"
+    - PROJECT="learnreg"
+    - PROJECT="moew"
 before_script:
   - sudo apt-get update -qq
   - pip install --upgrade pip
   - pip install --upgrade virtualenv
 script:
   - ./$PROJECT/run.sh
+

@@ -20,6 +20,8 @@ const MockControl = goog.require('goog.testing.MockControl');
 const NavChart = goog.require('eeg_modelling.eeg_viewer.NavChart');
 const dom = goog.require('goog.dom');
 const gvizEvents = goog.require('google.visualization.events');
+const mockmatchers = goog.require('goog.testing.mockmatchers');
+const singleton = goog.require('goog.testing.singleton');
 const testSuite = goog.require('goog.testing.testSuite');
 
 let mockControl;
@@ -34,6 +36,7 @@ testSuite({
   setUp() {
     mockControl = new MockControl();
 
+    singleton.reset();
     navChart = NavChart.getInstance();
 
     storeData = {
@@ -44,9 +47,10 @@ testSuite({
         cols: [0, 1, 1, 2, 3, 5],
       },
       numSecs: 10,
-      predictionMode: 'test',
+      predictionMode: 'None',
       samplingFreq: 1,
       seriesHeight: 42,
+      waveEvents: [],
     };
 
     const parentContainer = document.createElement('div');
@@ -94,6 +98,29 @@ testSuite({
     mockControl.$replayAll();
 
     navChart.updateChartOptions(storeData);
+
+    mockControl.$verifyAll();
+  },
+
+  testHandleChartData_highlightsViewport() {
+    const numMatcher = new mockmatchers.ArgumentMatcher(
+        (num) => goog.isNumber(num) && num >= 0);
+
+    const mockRect = mockControl.createFunctionMock('fillRect');
+    const mockClearRect = mockControl.createFunctionMock('clearRect');
+    const mockGetContext = mockControl.createMethodMock(navChart,
+        'getContext');
+    mockGetContext().$returns({
+      setLineDash: () => null,
+      fillRect: mockRect,
+      clearRect: mockClearRect,
+    });
+    mockClearRect(numMatcher, numMatcher, numMatcher, numMatcher).$once();
+    mockRect(numMatcher, numMatcher, numMatcher, numMatcher).$once();
+
+    mockControl.$replayAll();
+
+    navChart.handleChartData(storeData, ['numSecs', 'chunkStart']);
 
     mockControl.$verifyAll();
   },

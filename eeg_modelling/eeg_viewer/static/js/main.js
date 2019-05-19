@@ -17,12 +17,17 @@ goog.module('eeg_modelling.eeg_viewer.views');
 const Annotations = goog.require('eeg_modelling.eeg_viewer.Annotations');
 const ChartController = goog.require('eeg_modelling.eeg_viewer.ChartController');
 const Console = goog.require('goog.debug.Console');
+const Downloader = goog.require('eeg_modelling.eeg_viewer.Downloader');
 const Error = goog.require('eeg_modelling.eeg_viewer.Error');
+const Graph = goog.require('eeg_modelling.eeg_viewer.Graph');
 const Menus = goog.require('eeg_modelling.eeg_viewer.Menus');
 const NavChart = goog.require('eeg_modelling.eeg_viewer.NavChart');
 const Predictions = goog.require('eeg_modelling.eeg_viewer.Predictions');
 const Requests = goog.require('eeg_modelling.eeg_viewer.Requests');
 const ToolBar = goog.require('eeg_modelling.eeg_viewer.ToolBar');
+const Uploader = goog.require('eeg_modelling.eeg_viewer.Uploader');
+const WaveEventForm = goog.require('eeg_modelling.eeg_viewer.WaveEventForm');
+const WaveEvents = goog.require('eeg_modelling.eeg_viewer.WaveEvents');
 const WindowLocation = goog.require('eeg_modelling.eeg_viewer.WindowLocation');
 
 /** @const {!Console} */
@@ -31,7 +36,26 @@ console.setCapturing(true);
 
 Annotations.getInstance();
 ChartController.getInstance();
+Downloader.getInstance();
 Error.getInstance();
+
+/** @const {!Graph} */
+const graph = Graph.getInstance();
+goog.exportSymbol(
+    'graph.closeSensitivityMenu',
+    goog.bind(graph.closeSensitivityMenu, graph));
+goog.exportSymbol(
+    'graph.increaseSensitivity',
+    goog.bind(graph.increaseSensitivity, graph));
+goog.exportSymbol(
+    'graph.decreaseSensitivity',
+    goog.bind(graph.decreaseSensitivity, graph));
+goog.exportSymbol(
+    'graph.allowDrop',
+    goog.bind(graph.allowDrop, graph));
+goog.exportSymbol(
+    'graph.drop',
+    goog.bind(graph.drop, graph));
 
 /** @const {!Menus} */
 const menus = Menus.getInstance();
@@ -50,8 +74,8 @@ goog.exportSymbol(
     'predictions.selectPredictionMode',
     goog.bind(predictions.handlePredictionModeSelection, predictions));
 goog.exportSymbol(
-    'predictions.filterPredictions',
-    goog.bind(predictions.filterPredictions, predictions));
+    'predictions.toggleFilter',
+    goog.bind(predictions.toggleFilter, predictions));
 goog.exportSymbol(
     'predictions.selectPredictionLabel',
     goog.bind(predictions.handlePredictionLabelSelection, predictions));
@@ -69,8 +93,86 @@ goog.exportSymbol('toolBar.nextSec', goog.bind(toolBar.nextSec, toolBar));
 goog.exportSymbol('toolBar.prevChunk', goog.bind(toolBar.prevChunk, toolBar));
 goog.exportSymbol('toolBar.prevSec', goog.bind(toolBar.prevSec, toolBar));
 
+/** @const {!Uploader} */
+const uploader = Uploader.getInstance();
+goog.exportSymbol(
+    'uploader.closeMenu', goog.bind(uploader.closeMenu, uploader));
+goog.exportSymbol(
+    'uploader.openMenu', goog.bind(uploader.openMenu, uploader));
+goog.exportSymbol(
+    'uploader.handleFileChange',
+    goog.bind(uploader.handleFileChange, uploader));
+goog.exportSymbol(
+    'uploader.upload', goog.bind(uploader.upload, uploader));
+
 /** @const {!WindowLocation} */
 const windowLocation = WindowLocation.getInstance();
+
+/** @const {!WaveEventForm} */
+const waveEventForm = WaveEventForm.getInstance();
+goog.exportSymbol(
+    'waveEventForm.selectType',
+    goog.bind(waveEventForm.selectType, waveEventForm));
+goog.exportSymbol(
+    'waveEventForm.close',
+    goog.bind(waveEventForm.close, waveEventForm));
+goog.exportSymbol(
+    'waveEventForm.save',
+    goog.bind(waveEventForm.save, waveEventForm));
+goog.exportSymbol(
+    'waveEventForm.toggleAllChannels',
+    goog.bind(waveEventForm.toggleAllChannels, waveEventForm));
+goog.exportSymbol(
+    'waveEventForm.clickInput',
+    goog.bind(waveEventForm.clickInput, waveEventForm));
+goog.exportSymbol(
+    'waveEventForm.drag',
+    goog.bind(waveEventForm.drag, waveEventForm));
+
+/** @const {!WaveEvents} */
+const waveEvents = WaveEvents.getInstance();
+goog.exportSymbol(
+    'waveEvents.closeWaveEventMenu',
+    goog.bind(waveEvents.closeWaveEventMenu, waveEvents));
+goog.exportSymbol(
+    'waveEvents.deleteWaveEvent',
+    goog.bind(waveEvents.deleteWaveEvent, waveEvents));
+goog.exportSymbol(
+    'waveEvents.navigateToWaveEvent',
+    goog.bind(waveEvents.navigateToWaveEvent, waveEvents));
+goog.exportSymbol(
+    'waveEvents.searchSimilarPatterns',
+    goog.bind(waveEvents.searchSimilarPatterns, waveEvents));
+goog.exportSymbol(
+    'waveEvents.acceptSimilarPattern',
+    goog.bind(waveEvents.acceptSimilarPattern, waveEvents));
+goog.exportSymbol(
+    'waveEvents.editSimilarPattern',
+    goog.bind(waveEvents.editSimilarPattern, waveEvents));
+goog.exportSymbol(
+    'waveEvents.closeSimilarPatternMenu',
+    goog.bind(waveEvents.closeSimilarPatternMenu, waveEvents));
+goog.exportSymbol(
+    'waveEvents.navigateToPattern',
+    goog.bind(waveEvents.navigateToPattern, waveEvents));
+goog.exportSymbol(
+    'waveEvents.rejectSimilarPattern',
+    goog.bind(waveEvents.rejectSimilarPattern, waveEvents));
+goog.exportSymbol(
+    'waveEvents.downloadEvents',
+    goog.bind(waveEvents.downloadEvents, waveEvents));
+goog.exportSymbol(
+    'waveEvents.searchMore',
+    goog.bind(waveEvents.searchMore, waveEvents));
+goog.exportSymbol(
+    'waveEvents.rejectAll',
+    goog.bind(waveEvents.rejectAll, waveEvents));
+goog.exportSymbol(
+    'waveEvents.toggleSimilaritySettings',
+    goog.bind(waveEvents.toggleSimilaritySettings, waveEvents));
+goog.exportSymbol(
+    'waveEvents.saveSimilaritySettings',
+    goog.bind(waveEvents.saveSimilaritySettings, waveEvents));
 
 /**
  * Make a request to the server when the URL changes.

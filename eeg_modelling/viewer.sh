@@ -282,6 +282,7 @@ compile_js_app() {
       --js='eeg_viewer/static/js/**.js' \
       --js='!eeg_viewer/static/js/**_test.js' \
       --js='!eeg_viewer/static/js/compiled_*.js' \
+      --js='eeg_viewer/jslib/download_helper.js' \
       --js='jsprotos/**.js' \
       --js='third_party/protobuf/js/map.js' \
       --js='third_party/protobuf/js/message.js' \
@@ -340,7 +341,7 @@ compile_js_protos() {
   assert_folder "${PROTO_JS_COMPILED_FOLDER}"
 
   # Compile
-  ${PROTO_COMPILER_CMD} --js_out=library="${PROTO_JS_COMPILED_FOLDER}/main",binary:. protos/*.proto
+  ${PROTO_COMPILER_CMD} -I="${PROTO_SRC_FOLDER}" --js_out=library="${PROTO_JS_COMPILED_FOLDER}/main",binary:. protos/*.proto
   ${PROTO_COMPILER_CMD} --js_out=library="${PROTO_JS_COMPILED_FOLDER}/google",binary:. ${PROTO_TIMESTAMP_FNAME}
 
   # Add license header

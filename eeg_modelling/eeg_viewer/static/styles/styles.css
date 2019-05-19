@@ -49,6 +49,10 @@
   right: 64px;
 }
 
+.mdl-card__menu.tertiary {
+  right: 112px;
+}
+
 .mdl-card .sub-card {
   border-top: lightgrey 1px solid;
   border-bottom: lightgrey 1px solid;
@@ -108,27 +112,27 @@
 }
 
 .right-side-panel .scrollable-table-div {
-  max-height: 70vh;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.prediction td, .prediction th {
+td, .prediction th {
+  cursor: pointer;
+}
+
+th i.sorted, th i.sorted-reverse {
   display: none;
 }
 
-.prediction td.time, .prediction th.time, .prediction td.rank, .prediction th.rank {
-  display: table-cell;
-}
-
-.prediction tr.ir-true-pos {
-  background-color: rgba(83, 109, 254, 0.4);
+.goog-tablesorter-sorted i.sorted, .goog-tablesorter-sorted-reverse i.sorted-reverse {
+  display: inline;
 }
 
 #parent-chart-container > div.hidden {
   display: none;
 }
 
-#file-menu-modal {
+.modal {
   display: block;
   position: fixed;
   top: 0;
@@ -139,9 +143,24 @@
   background-color: rgba(0, 0, 0, 0.05);
 }
 
-#file-menu, #file-info {
+.modal .mdl-card {
   margin: auto;
   top: 200px;
+}
+
+.form-actions button {
+  float: right;
+}
+
+#similarity-settings-modal > div {
+  width: 400px;
+}
+
+#similarity-settings-modal label {
+  margin-left: 30px;
+}
+
+#file-menu, #file-info {
   width: 800px;
 }
 
@@ -218,11 +237,13 @@
   width: inherit;
 }
 
-.textfield > input:focus {
+.textfield > input:focus,
+.textfield > input.force-focus {
   border-color: rgb(83,109,254);
 }
 
-.textfield > input:focus ~ label {
+.textfield > input:focus ~ label,
+.textfield > input.force-focus ~ label {
   color: rgb(83,109,254);
 }
 
@@ -242,7 +263,7 @@
   position: absolute;
 }
 
-.switch {
+.filter-box {
   margin: 12px;
 }
 
@@ -258,4 +279,181 @@
 .canvas-overlay {
   position: absolute;
   pointer-events: none;
+}
+
+.google-visualization-tooltip {
+  position: absolute;
+  background-color: white;
+  border: gray solid 1.5pt;
+  border-radius: 4pt;
+  text-align: left;
+  z-index: 9;
+}
+
+.google-visualization-tooltip p {
+  margin: 12px;
+  font-size: 14pt;
+}
+
+.panel-info {
+  padding: 15px 25px;
+  text-align: center;
+  font-size: 18px;
+  font-style: italic;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+#similar-patterns-spinner,
+#similar-patterns-search-more {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 10px;
+}
+
+#similarity-error {
+  color: red;
+}
+
+.prediction-circle {
+  /* Overrides given by MDL table row */
+  padding: 0px !important;
+}
+
+#channel-actions-container {
+  position: absolute;
+  min-height: auto;
+}
+
+#wave-events-table-container {
+  min-height: 15vh;
+}
+
+#similar-patterns-table-container {
+  max-height: 55vh;
+}
+
+#wave-events-panel th:first-of-type,
+#wave-events-panel td:first-of-type {
+  padding-left: 18px;
+}
+
+#wave-events-panel td {
+  padding-right: 12px;
+}
+
+tr.selected-wave-event {
+  background-color: lightblue;
+}
+
+#wave-event-form {
+  position: absolute;
+  z-index: 10;
+}
+
+.column-container {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+#wave-event-form .textfield {
+  padding-top: 10px;
+  padding-bottom: 0px;
+  width: 34%;
+}
+
+#wave-event-form .textfield input {
+  padding-left: 5px;
+}
+
+#wave-event-form .textfield input.force-focus {
+  border-width: 2px;
+}
+
+#wave-event-form .dropdown {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.event-actions-container {
+  position: fixed;
+  min-height: auto;
+  width: 280px;
+  right: 0px;
+  background-color: white;
+}
+
+.event-actions-container .mdl-card__menu {
+  margin-top: 0;
+}
+
+.mdl-button.block {
+  display: block;
+}
+
+#wave-event-channels {
+  max-height: 20vh;
+  overflow-y: auto;
+  padding: 0px 30px 10px;
+}
+
+#wave-event-channels div {
+  -webkit-column-count: 3;
+  -moz-column-count: 3;
+  column-count: 3;
+}
+
+#wave-event-channels .mdl-card__menu {
+  top: 7px;
+  width: 50px;
+}
+
+#wave-event-channels h4 {
+  font-size: 17px;
+}
+
+#wave-event-channels.force-focus h4 {
+  color: rgb(83, 109, 254);
+}
+
+#wave-event-channels-checkboxes {
+  border: rgb(140, 140, 140) 2px solid;
+  border-radius: 5px;
+  padding: 5px 10px;
+}
+
+#wave-event-channels-checkboxes .mdl-checkbox__label {
+  font-size: 12px;
+}
+
+.force-focus #wave-event-channels-checkboxes {
+  border-color: rgb(83, 109, 254);
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.top-right-button {
+  display: inline-block;
+  float: right;
+  margin: 12px;
+}
+
+#similar-patterns-container {
+  min-height: 40vh;
+}
+
+#similar-patterns-container .mdl-card__title {
+  display: inline-block;
+}
+
+#similarity-metrics {
+  padding: 10px;
+  font-family: "Roboto","Helvetica","Arial",sans-serif;
+}
+
+#similarity-metrics div {
+  margin: 6px;
 }

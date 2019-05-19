@@ -20,13 +20,20 @@ const DataRequest = goog.require('proto.eeg_modelling.protos.DataRequest');
 const DataResponse = goog.require('proto.eeg_modelling.protos.DataResponse');
 const Dispatcher = goog.require('eeg_modelling.eeg_viewer.Dispatcher');
 const EventType = goog.require('goog.net.EventType');
+const FileParams = goog.require('proto.eeg_modelling.protos.FileParams');
+const FilterParams = goog.require('proto.eeg_modelling.protos.FilterParams');
 const ResponseType = goog.require('goog.net.XhrIo.ResponseType');
+const SimilarPatternsRequest = goog.require('proto.eeg_modelling.protos.SimilarPatternsRequest');
+const SimilarPatternsResponse = goog.require('proto.eeg_modelling.protos.SimilarPatternsResponse');
+const SimilaritySettings = goog.require('proto.eeg_modelling.protos.SimilaritySettings');
 const SingleChannel = goog.require('proto.eeg_modelling.protos.ChannelDataId.SingleChannel');
 const Store = goog.require('eeg_modelling.eeg_viewer.Store');
+const TimeSpan = goog.require('proto.eeg_modelling.protos.TimeSpan');
 const XhrIo = goog.require('goog.net.XhrIo');
 const closureString = goog.require('goog.string');
 const events = goog.require('goog.events');
 const log = goog.require('goog.log');
+const montages = goog.require('eeg_modelling.eeg_viewer.montages');
 
 
 /**
@@ -38,30 +45,30 @@ const log = goog.require('goog.log');
  */
 let ErrorResponse;
 
+/**
+ * @typedef {!DataRequest|!SimilarPatternsRequest}
+ */
+let ProtoRequest;
+
 
 class Requests {
 
   constructor() {
     const store = Store.getInstance();
-    // This listener callback will make a new HTTP request when one of the
-    // filter setting or chunk setting params change.
+    // This listener callback will make a new HTTP request when a data request
+    // property changes.
+    store.registerListener(
+        Store.RequestProperties, 'Requests',
+        (store, changedProperties) =>
+            this.handleRequestParameters(store, changedProperties));
+    // This listener callback will make a new HTTP request to search similar
+    // patterns.
     store.registerListener(
         [
-          Store.Property.CHUNK_START, Store.Property.CHUNK_DURATION,
-          Store.Property.LOW_CUT, Store.Property.HIGH_CUT, Store.Property.NOTCH,
-          Store.Property.CHANNEL_IDS
+          Store.Property.SIMILAR_PATTERN_TEMPLATE,
+          Store.Property.SIMILAR_PATTERN_RESULT_RANK,
         ],
-        'Requests', (store) => this.handleRequestParameters(false, store));
-    // This listener callback will make a new HTTP request when one of the
-    // file params change.
-    store.registerListener(
-        [
-          Store.Property.TFEX_SSTABLE_PATH,
-          Store.Property.PREDICTION_SSTABLE_PATH, Store.Property.EDF_PATH,
-          Store.Property.SSTABLE_KEY, Store.Property.TFEX_FILE_PATH,
-          Store.Property.PREDICTION_FILE_PATH
-        ],
-        'Requests', (store) => this.handleRequestParameters(true, store));
+        'Requests', (store) => this.handleSearchSimilarPattern(store));
 
     this.logger_ = log.getLogger('eeg_modelling.eeg_viewer.Requests');
   }
@@ -75,9 +82,9 @@ class Requests {
   }
 
   /**
-   * Creates a request for a chunk of waveform data.
+   * Creates a request with XhrIo and wraps it in a promise.
    * @param {string} url The path to send the request to.
-   * @param {!DataRequest} requestContent A request protobuf.
+   * @param {!ProtoRequest} requestContent Proto instance
    * @param {function(!Object): !Object} formatResponse Formats response data.
    * @return {!Promise} A promise returning an XhrIo response.
    */
@@ -90,98 +97,66 @@ class Requests {
     xhrIo.setResponseType(ResponseType.ARRAY_BUFFER);
     return new Promise((resolve, reject) => {
       events.listen(xhrIo, EventType.COMPLETE, function(e) {
-        if (e.target.getStatus() != 200) {
-          const response = (e.target.getResponseHeader('Content-Type') === 'application/json')
-              ? parseJsonResponse(e.target.getResponse())
-              : {};
-          reject(response);
-        } else {
+        const status = e.target.getStatus();
+        if (status === 502) {
+          reject({
+            message: 'Server unavailable',
+          });
+        } else if (status === 200) {
           resolve(formatResponse(e.target.getResponse()));
+        } else {
+          const response = (e.target.getResponseHeader('Content-Type') ===
+                            'application/json') ?
+              parseJsonResponse(e.target.getResponse()) :
+              {};
+          reject(response);
         }
       });
-      log.info(this.logger_, `POST request to ${url}, params: ${requestContent}`);
+      log.info(
+          this.logger_, `POST request to ${url}, params: ${requestContent}`);
       xhrIo.send(url, 'POST', requestContent.serializeBinary());
     });
   }
 
   /**
-   * Creates a data request Uri from the ChunkStore.
-   * @param {!Store.StoreData} store Snapshot of chunk data store.
-   * @return {!Promise} A promise that makes an Xhr request.
+   * Sends a request and dispatches an action once the request ends.
+   * @param {string} url The path to send the request to.
+   * @param {!ProtoRequest} requestContent Proto request instance.
+   * @param {function(!Object): !Object} formatResponse Formats response data.
+   * @param {!Dispatcher.ActionType} actionOk Action to dispatch if the
+   *     request succeeds.
+   * @param {!Dispatcher.ActionType} actionError Action to dispatch if the
+   *     request fails.
    */
-  createDataResponsePromise(store) {
-    const url = '/waveform_data/chunk';
-
-    let channelDataIds = [];
-    if (store.channelIds) {
-      channelDataIds =
-          store.channelIds
-              .map((channelId) =>
-                  this.convertIndexStrToChannelDataId(channelId))
-              .filter(channelDataId => channelDataId);
-    }
-
-    const requestContent = new DataRequest();
-    requestContent.setTfExSstablePath(store.tfExSSTablePath);
-    requestContent.setSstableKey(store.sstableKey);
-    requestContent.setPredictionSstablePath(store.predictionSSTablePath);
-    requestContent.setEdfPath(store.edfPath);
-    requestContent.setTfExFilePath(store.tfExFilePath);
-    requestContent.setPredictionFilePath(store.predictionFilePath);
-    requestContent.setChunkDurationSecs(store.chunkDuration);
-    requestContent.setChunkStart(store.chunkStart);
-    requestContent.setChannelDataIdsList(channelDataIds);
-    requestContent.setLowCut(store.lowCut);
-    requestContent.setHighCut(store.highCut);
-    requestContent.setNotch(store.notch);
-
-    const formatResponse = (response) => {
-      return DataResponse.deserializeBinary(response);
-    };
-
-    return this.createXhrIoPromise(url, requestContent, formatResponse);
-  }
-
-  /**
-   * Handles HTTP requests for chunk data.
-   * @param {boolean} fileParamDirty Indicates if the call was triggered
-   *     by a change in a file parameter.
-   * @param {!Store.StoreData} store Snapshot of chunk data store.
-   */
-  handleRequestParameters(fileParamDirty, store) {
-    Dispatcher.getInstance().sendAction({
-      actionType: Dispatcher.ActionType.REQUEST_START,
-      data: {
-        fileParamDirty,
-      },
-    });
-    this.createDataResponsePromise(store)
-        .then((value) => {
-          Dispatcher.getInstance().sendAction({
-            actionType: Dispatcher.ActionType.REQUEST_RESPONSE_OK,
-            data: value,
-          });
-        })
-        .catch((error) => {
-          const errorResponse = /** @type {!ErrorResponse} */ (error);
-          log.error(
-              this.logger_,
-              errorResponse.message + ', ' + errorResponse.detail);
-          Dispatcher.getInstance().sendAction({
-            actionType: Dispatcher.ActionType.REQUEST_RESPONSE_ERROR,
-            data: {
-              message: errorResponse.message || 'Unknown Request Error',
-            },
-          });
+  sendRequest(url, requestContent, formatResponse, actionOk, actionError) {
+    this.createXhrIoPromise(url, requestContent, formatResponse)
+      .then((data) => {
+        Dispatcher.getInstance().sendAction({
+          actionType: actionOk,
+          data,
         });
+      })
+      .catch((error) => {
+        const errorResponse = /** @type {!ErrorResponse} */ (error);
+        log.error(
+            this.logger_,
+            errorResponse.message + ', ' + errorResponse.detail);
+        Dispatcher.getInstance().sendAction({
+          actionType: actionError,
+          data: {
+            message: errorResponse.message || 'Unknown Request Error',
+          },
+        });
+      });
   }
 
   /**
    * Converts channel ID's expressed in string form to proto format.
    * @param {string} channelStr The channel ID in string format.
    * @return {?ChannelDataId} Converted string channel ID.
+   * @private
    */
-  convertIndexStrToChannelDataId(channelStr) {
+  convertIndexStrToChannelDataId_(channelStr) {
     const channelIndices = channelStr.split('-')
         .map(x => closureString.parseInt(x))
         .filter(x => !isNaN(x));
@@ -203,6 +178,162 @@ class Requests {
       return null;
     }
     return channelDataId;
+  }
+
+  /**
+   * Sets the channelDataIds param from a list into a request protobuf.
+   * @param {!ProtoRequest} requestContent Proto request to set the param to.
+   * @param {?Array<string>} channelIds Array of channel ids.
+   * @private
+   */
+  setChannelDataIdsParam_(requestContent, channelIds) {
+    let channelDataIds = [];
+    if (channelIds) {
+      channelDataIds =
+          channelIds
+              .map(
+                  (channelId) =>
+                      this.convertIndexStrToChannelDataId_(channelId))
+              .filter(channelDataId => channelDataId);
+    }
+
+    requestContent.setChannelDataIdsList(channelDataIds);
+  }
+
+  /**
+   * Sets the file parameters from the store into a request protobuf.
+   * @param {!DataRequest|!FileParams} requestContent Proto instance to set the
+   *     params to.
+   * @param {!Store.StoreData} store Data from the store.
+   * @private
+   */
+  setFileParams_(requestContent, store) {
+    requestContent.setTfExSstablePath(store.tfExSSTablePath);
+    requestContent.setSstableKey(store.sstableKey);
+    requestContent.setPredictionSstablePath(store.predictionSSTablePath);
+    requestContent.setEdfPath(store.edfPath);
+    requestContent.setTfExFilePath(store.tfExFilePath);
+    requestContent.setPredictionFilePath(store.predictionFilePath);
+  }
+
+  /**
+   * Sets the filter parameters from the store into a request protobuf
+   * @param {!DataRequest|!FilterParams} requestContent Proto instance to set
+   *     the params to.
+   * @param {!Store.StoreData} store Data from the store.
+   * @private
+   */
+  setFilterParams_(requestContent, store) {
+    requestContent.setLowCut(store.lowCut);
+    requestContent.setHighCut(store.highCut);
+    requestContent.setNotch(store.notch);
+  }
+
+  /**
+   * Handles HTTP requests for chunk data.
+   * @param {!Store.StoreData} store Snapshot of chunk data store.
+   * @param {!Array<!Store.Property>} changedProperties List of the properties
+   *     that changed because of the last action.
+   */
+  handleRequestParameters(store, changedProperties) {
+    const fileParamDirty = Store.FileRequestProperties.some(
+        (param) => changedProperties.includes(param));
+    Dispatcher.getInstance().sendAction({
+      actionType: Dispatcher.ActionType.REQUEST_START,
+      data: {
+        fileParamDirty,
+      },
+    });
+    const url = '/waveform_data/chunk';
+    const requestContent = new DataRequest();
+    this.setFileParams_(requestContent, store);
+    this.setFilterParams_(requestContent, store);
+    this.setChannelDataIdsParam_(requestContent, store.channelIds);
+
+    requestContent.setChunkDurationSecs(store.chunkDuration);
+    requestContent.setChunkStart(store.chunkStart);
+
+    const formatResponse = (response) => {
+      return DataResponse.deserializeBinary(response);
+    };
+
+    this.sendRequest(
+      url,
+      requestContent,
+      formatResponse,
+      Dispatcher.ActionType.REQUEST_RESPONSE_OK,
+      Dispatcher.ActionType.REQUEST_RESPONSE_ERROR,
+    );
+  }
+
+  /**
+   * Creates a SimilarPatternsRequest proto from the data saved in the store.
+   * @param {!Store.StoreData} store Snapshot of chunk data store.
+   * @return {!SimilarPatternsRequest} A SimilarPatternsRequest proto object.
+   * @private
+   */
+  createSimilarPatternsRequest_(store) {
+    const fileParams = new FileParams();
+    const filterParams = new FilterParams();
+    this.setFileParams_(fileParams, store);
+    this.setFilterParams_(filterParams, store);
+
+    const requestContent = new SimilarPatternsRequest();
+    requestContent.setFileParams(fileParams);
+    requestContent.setFilterParams(filterParams);
+    requestContent.setStartTime(store.similarPatternTemplate.startTime);
+    requestContent.setDuration(store.similarPatternTemplate.duration);
+
+    const montageInfo = montages.createMontageInfo(
+        store.indexChannelMap, store.similarPatternTemplate.channelList);
+    this.setChannelDataIdsParam_(requestContent, montageInfo.indexStrList);
+
+    const seenEvents = [
+      ...store.waveEvents,
+      ...store.similarPatternsUnseen,
+      ...store.similarPatternsSeen,
+    ];
+
+    requestContent.setSeenEventsList(seenEvents.map((seenEvent) => {
+      const waveEventProto = new TimeSpan();
+      waveEventProto.setStartTime(seenEvent.startTime);
+      waveEventProto.setDuration(seenEvent.duration);
+      return waveEventProto;
+    }));
+
+    const similaritySettings = new SimilaritySettings();
+    similaritySettings.setTopN(store.similarPatternSettings.topN);
+    similaritySettings.setMergeCloseResults(
+        store.similarPatternSettings.mergeCloseResults);
+    similaritySettings.setMergeThreshold(
+        store.similarPatternSettings.mergeThreshold);
+
+    requestContent.setSettings(similaritySettings);
+
+    return requestContent;
+  }
+
+  /**
+   * Sends a request to search for a similar pattern.
+   * @param {!Store.StoreData} store Data from the store.
+   */
+  handleSearchSimilarPattern(store) {
+    if (!store.similarPatternTemplate) {
+      return;
+    }
+    const url = '/similarity';
+    const requestContent = this.createSimilarPatternsRequest_(store);
+    const formatResponse = (response) => {
+      return SimilarPatternsResponse.deserializeBinary(response);
+    };
+
+    this.sendRequest(
+      url,
+      requestContent,
+      formatResponse,
+      Dispatcher.ActionType.SEARCH_SIMILAR_RESPONSE_OK,
+      Dispatcher.ActionType.SEARCH_SIMILAR_RESPONSE_ERROR,
+    );
   }
 }
 
